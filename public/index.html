@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Presidenten – multiplayer (2 = joker)</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+    header{position:sticky;top:0;z-index:10;padding:12px 16px;background:#0b1225;border-bottom:1px solid #1f2937;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    header .title{font-weight:800}
+    main{display:grid;grid-template-columns:320px 1fr;gap:12px;padding:12px}
+    @media (max-width:900px){ main{grid-template-columns:1fr; padding-bottom:84px;} }
+    .card{background:#111827;border:1px solid #1f2937;border-radius:14px;padding:12px}
+    input,button{border-radius:12px;border:1px solid #334155;background:#0b1022;color:#e2e8f0;padding:12px;font-size:16px;min-height:44px}
+    button{cursor:pointer} button:disabled{opacity:.5;cursor:not-allowed}
+    .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+
+    .players{display:flex;flex-direction:column;gap:8px}
+    .pill{display:flex;align-items:center;gap:8px;background:#0b1022;border:2px solid #334155;padding:8px 12px;border-radius:999px}
+    .me{box-shadow:0 0 0 2px #22d3ee66}
+    .turn{box-shadow:0 0 0 2px #a78bfa66}
+    .role-pres{border-color:#22c55e} .role-vp{border-color:#3b82f6} .role-va{border-color:#f59e0b} .role-a{border-color:#ef4444} .role-mid{border-color:#64748b}
+    .pill .count{opacity:.95;font-variant-numeric:tabular-nums;font-size:14px}
+
+    .avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#1f2937;font-weight:700}
+
+    .hand{display:flex;flex-wrap:wrap;gap:8px}
+    .cardx{width:60px;height:84px;border-radius:12px;border:1px solid #334155;background:#0b1022;display:grid;grid-template-rows:auto 1fr auto;padding:8px;user-select:none;transition:transform .08s ease, opacity .1s ease, box-shadow .08s ease}
+    .cardx.sel{outline:3px solid #22d3ee}
+    .cardx.pop{box-shadow:0 0 0 3px #22c55e55, 0 6px 18px rgba(0,0,0,.35); transform:translateY(-2px)}
+    .cardx.dim{opacity:.35; filter:grayscale(25%)}
+    .rank{font-weight:800;line-height:1; font-size:18px}
+    .suit{font-size:16px}
+    .red{color:#ef4444} .black{color:#e2e8f0}
+
+    .footer{position:sticky;bottom:0;background:#0b1225;border-top:1px solid #1f2937;margin:12px -12px -12px;padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap}
+
+    .trick{display:flex;gap:8px;flex-wrap:wrap}
+    .mini{transform:scale(.85); opacity:.9}
+
+    .hint{font-size:12px;opacity:.85}
+    .log{font-size:12px;max-height:180px;overflow:auto}
+    .badge{font-size:14px;padding:6px 12px;border:1px solid #334155;border-radius:999px;background:#0b1022}
+
+    .overlay{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;padding:16px}
+    .overlay .panel{background:#0b1022;border:1px solid #334155;border-radius:16px;max-width:640px;width:100%;padding:16px;display:grid;gap:12px}
+    .win{font-size:18px;text-align:center}
+
+    .spinWrap{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center}
+    .wheel{width:280px;height:280px;border-radius:50%;border:6px solid #334155;position:relative;overflow:hidden;background:#111827}
+    .slice{position:absolute;inset:0;clip-path:polygon(50% 50%, 0 0, 100% 0);display:flex;align-items:flex-start;justify-content:center;padding-top:24px;font-weight:700}
+    .slice:nth-child(1){background:#1e293b}
+    .slice:nth-child(2){background:#0f766e; transform:rotate(180deg)}
+    .wheelArrow{position:absolute;top:-18px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:12px solid transparent;border-right:12px solid transparent;border-bottom:18px solid #e2e8f0}
+
+    /* Swap modal (visual) */
+    .swapWrap{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+    .swapPanel{background:#0b1022;border:1px solid #334155;border-radius:16px;max-width:720px;width:100%;padding:16px;display:grid;gap:12px}
+    .swapCols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .swapCol{background:#0b1225;border:1px solid #334155;border-radius:12px;padding:8px}
+    .swapCards{display:flex;gap:8px;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">🂡 Presidenten</div>
+    <div id="roomInfo"></div>
+  </header>
+  <main>
+    <aside class="card">
+      <h3>Room</h3>
+      <div class="row"><input id="name" placeholder="Jouw naam" /></div>
+      <div class="row"><input id="code" placeholder="Room code (bv. ABC12)" /></div>
+      <div class="row">
+        <button id="createBtn">Room maken</button>
+        <button id="joinBtn">Joinen</button>
+      </div>
+      <div class="row">
+        <button id="startBtn" disabled>Spel starten</button>
+        <button id="deckBtn" title="Schakel 1/2 decks (host)">Decks: <span id="deckCount">1</span></button>
+      </div>
+
+      <h4>Spelers</h4>
+      <div id="players" class="players"></div>
+
+      <h4>Scoreboard (totaal)</h4>
+      <div id="scoreboard" class="players"></div>
+
+      <h4>Log</h4>
+      <div id="log" class="log"></div>
+    </aside>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3>Jouw hand</h3>
+        <span id="youCount" class="badge">0 kaarten</span>
+      </div>
+      <div id="hand" class="hand"></div>
+      <div class="footer">
+        <button id="playBtn" disabled style="flex:1">Leg geselecteerde</button>
+        <button id="passBtn" disabled>Pas</button>
+        <button id="newRoundBtn" disabled>Nieuwe ronde</button>
+      </div>
+
+      <h3>Huidige slag</h3>
+      <div id="trick" class="trick"></div>
+      <div class="hint">2 = joker. Leg even hoog of hoger en minstens het huidige aantal (max 4). Na je eerste selectie: enkel zelfde rang of 2 bijselecteren.</div>
+    </section>
+  </main>
+
+  <!-- Scoreboard overlay -->
+  <div id="overlay" class="overlay">
+    <div class="panel">
+      <div class="win" id="winBanner">Ronde afgelopen</div>
+      <div id="roundScores" class="players"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px">
+        <button id="okBtn">Ok</button>
+        <button id="nextBtn">Nieuwe ronde</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Spin wheel (2× 3♣) -->
+  <div id="spin" class="spinWrap">
+    <div style="position:relative">
+      <div class="wheelArrow"></div>
+      <div id="wheel" class="wheel">
+        <div class="slice" id="sliceA">A</div>
+        <div class="slice" id="sliceB">B</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Visual swap modal -->
+  <div id="swap" class="swapWrap">
+    <div class="swapPanel">
+      <h3>Kaartwissel</h3>
+      <div class="swapCols">
+        <div class="swapCol">
+          <h4>Afgegeven</h4>
+          <div id="swapGiven" class="swapCards"></div>
+        </div>
+        <div class="swapCol">
+          <h4>Gekregen</h4>
+          <div id="swapReceived" class="swapCards"></div>
+        </div>
+      </div>
+      <div class="row" style="justify-content:flex-end"><button id="swapOk">Ok</button></div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let youId=null, roomCode=null, lastHands=new Map();
+    let baseRank = null;
+
+    const $ = (id)=>document.getElementById(id);
+    const nameI=$('name'), codeI=$('code'), roomInfo=$('roomInfo'), deckBtn=$('deckBtn'), deckCountLabel=$('deckCount');
+    const createBtn=$('createBtn'), joinBtn=$('joinBtn'), startBtn=$('startBtn');
+    const playersDiv=$('players'), scoreboardDiv=$('scoreboard');
+    const handDiv=$('hand'), youCount=$('youCount'), playBtn=$('playBtn'), passBtn=$('passBtn'), newRoundBtn=$('newRoundBtn');
+    const logDiv=$('log'), trickDiv=$('trick');
+    const overlay=$('overlay'), winBanner=$('winBanner'), roundScores=$('roundScores'), okBtn=$('okBtn'), nextBtn=$('nextBtn');
+    const spinWrap=$('spin'), wheel=$('wheel'), sliceA=$('sliceA'), sliceB=$('sliceB');
+
+    // swap modal
+    const swapWrap=$('swap'), swapGiven=$('swapGiven'), swapReceived=$('swapReceived'), swapOk=$('swapOk');
+
+    const RANKS = ['3','4','5','6','7','8','9','10','J','Q','K','A','2'];
+    const RVAL  = Object.fromEntries(RANKS.map((r,i)=>[r,i]));
+    const suitMap={'♣':'C','♦':'D','♥':'H','♠':'S'};
+
+    function avatarTxt(name){ const p=(name||'??').trim().split(/\s+/); return (p[0]?.[0]||'').toUpperCase() + (p[1]?.[0]||'').toUpperCase(); }
+    function roleClass(role){ if(role==='President') return 'role-pres'; if(role==='Vice-President') return 'role-vp'; if(role==='Vice-Asshole') return 'role-va'; if(role==='Asshole') return 'role-a'; return 'role-mid'; }
+    function addLog(t){ const p=document.createElement('div'); p.textContent=t; logDiv.prepend(p); }
+    function suitChar(s){ return ({C:'♣',D:'♦',H:'♥',S:'♠'})[s]; }
+    function isRed(s){ return s==='D'||s==='H'; }
+    function rankFrom(code){ return code.slice(0,-1); }
+    function isTwo(code){ return rankFrom(code)==='2'; }
+
+    function renderCard(code, mini=false){
+      const rank = code.slice(0,-1);
+      const suit = code.at(-1);
+      const div=document.createElement('div');
+      div.className='cardx'+(mini?' mini':'');
+      const r=document.createElement('div'); r.className='rank '+(isRed(suit)?'red':'black'); r.textContent=rank;
+      const mid=document.createElement('div'); mid.style.display='grid'; mid.style.placeItems='center';
+      const s=document.createElement('div'); s.className='suit '+(isRed(suit)?'red':'black'); s.textContent=suitChar(suit);
+      const b=document.createElement('div'); b.className='suit '+(isRed(suit)?'red':'black'); b.style.justifySelf='end'; b.textContent=suitChar(suit);
+      mid.appendChild(s);
+      div.appendChild(r); div.appendChild(mid); div.appendChild(b);
+      return div;
+    }
+
+    function codeFromNode(node){
+      const rankTxt = node.querySelector('.rank')?.textContent;
+      const suitCharTxt = node.lastChild?.textContent;
+      return rankTxt && suitMap[suitCharTxt] ? (rankTxt + suitMap[suitCharTxt]) : null;
+    }
+
+    function selectedCodes(){
+      const sel = [...handDiv.querySelectorAll('.cardx.sel')];
+      return sel.map(codeFromNode);
+    }
+
+    function renderPlayers(state){
+      playersDiv.innerHTML='';
+      state.players.forEach(p=>{
+        const row=document.createElement('div');
+        row.className=['pill', roleClass(p.role), (p.id===youId?' me':''), (state.turnPlayerId===p.id?' turn':'')].join(' ');
+        const av=document.createElement('div'); av.className='avatar'; av.textContent=avatarTxt(p.name);
+        const name=document.createElement('div'); name.textContent=p.name;
+        const count=document.createElement('div'); count.className='count'; count.textContent = p.finished? 'klaar' : `${p.handCount} kaarten`;
+        row.appendChild(av); row.appendChild(name); row.appendChild(count);
+        playersDiv.appendChild(row);
+      });
+    }
+
+    function renderScoreboard(state){
+      scoreboardDiv.innerHTML='';
+      const sorted = state.players.slice().sort((a,b)=> (b.score||0)-(a.score||0) || a.name.localeCompare(b.name));
+      sorted.forEach((p,idx)=>{
+        const row=document.createElement('div'); row.className=['pill', roleClass(p.role)].join(' ');
+        row.innerHTML = `<span class="avatar">${idx+1}</span><div>${p.name}</div><div class="count">${p.score||0} pt</div>`;
+        scoreboardDiv.appendChild(row);
+      });
+    }
+
+    function renderHand(){
+      const cards = lastHands.get(youId)||[];
+      youCount.textContent = `${cards.length} kaarten`;
+      handDiv.innerHTML='';
+      cards.forEach(c=>{
+        const node = renderCard(c);
+        node.onclick=()=>{
+          const code = codeFromNode(node);
+          const sel = selectedCodes();
+          const willSelect = !node.classList.contains('sel');
+          const proposal = willSelect ? sel.concat([code]) : sel.filter(x=>x!==code);
+          if (willSelect && proposal.length>4) return;
+          if(sel.length===0){
+            node.classList.toggle('sel');
+            baseRank = rankFrom(code);
+          } else {
+            let base = baseRank;
+            if(!base){
+              for(const sc of sel){ const r=rankFrom(sc); if(r!=='2'){ base=r; break; } }
+              if(!base && sel.some(c=>rankFrom(c)==='2')) base='2';
+              baseRank=base;
+            }
+            const r = rankFrom(code);
+            if(r===base || r==='2'){
+              node.classList.toggle('sel');
+            } else {
+              [...handDiv.querySelectorAll('.cardx.sel')].forEach(n=>n.classList.remove('sel'));
+              node.classList.add('sel');
+              baseRank = r;
+            }
+          }
+          enableActions();
+          applyHintingToHand();
+        };
+        handDiv.appendChild(node);
+      });
+    }
+
+    function renderTrick(t){
+      trickDiv.innerHTML='';
+      const meta=document.createElement('div'); meta.className='pill';
+      meta.textContent=(t.count?`Min. aantal: ${t.count}`:'Nieuwe slag') + (t.topRankVal!=null?` · even hoog of hoger dan ${RANKS[t.topRankVal]}`:'');
+      trickDiv.appendChild(meta);
+      if(t.pile && t.pile[0]){
+        const wrap=document.createElement('div'); wrap.style.display='flex'; wrap.style.gap='6px';
+        t.pile[0].cards.forEach(c=>wrap.appendChild(renderCard(c,true)));
+        trickDiv.appendChild(wrap);
+      }
+    }
+
+    function applyHintingToHand(){
+      const s = window.__state; if(!s) return;
+      const desired = s.trick?.count ?? null;
+      const top     = s.trick?.topRankVal ?? null;
+      const myHand  = (lastHands.get(youId) || []).slice();
+      const nodes   = [...handDiv.querySelectorAll('.cardx')];
+      const sel     = selectedCodes();
+
+      if(sel.length>=4){
+        nodes.forEach(n=>{ if(!n.classList.contains('sel')) n.classList.add('dim'); else { n.classList.remove('dim'); n.classList.add('pop'); }});
+        return;
+      }
+
+      function countByRank(hand){
+        const m={}; let t=0;
+        for(const c of hand){ const r=rankFrom(c); if(r==='2') t++; else m[r]=(m[r]||0)+1; }
+        return {m,t};
+      }
+      const {m:counts, t:twos} = countByRank(myHand);
+
+      function canStartWithRank(r){
+        if(desired==null) return true;
+        const have = (r==='2') ? twos : (counts[r]||0) + twos;
+        const maxPossible = Math.min(have, 4);
+        const rankOk = (top==null) || (r==='2' ? RVAL['2']>=top : RVAL[r]>=top);
+        return (maxPossible >= desired) && rankOk;
+      }
+
+      let base = baseRank;
+      if(sel.length){
+        if(!base){
+          for(const sc of sel){ const r=rankFrom(sc); if(r!=='2'){ base=r; break; } }
+          if(!base && sel.some(c=>rankFrom(c)==='2')) base='2';
+          baseRank=base;
+        }
+      } else {
+        base = null;
+      }
+
+      nodes.forEach(node=>{
+        node.classList.remove('dim','pop');
+        const code = codeFromNode(node); if(!code) return;
+        const r = rankFrom(code);
+        const eff = (r==='2') ? RVAL['2'] : RVAL[r];
+
+        if(desired!=null && top!=null && eff<top){ node.classList.add('dim'); return; }
+
+        if(sel.length===0){
+          if(canStartWithRank(r)) node.classList.add('pop'); else node.classList.add('dim');
+          return;
+        }
+
+        if(!(r===base || r==='2')){ node.classList.add('dim'); return; }
+
+        const willSelect = !node.classList.contains('sel');
+        const proposalLen = willSelect ? sel.length+1 : sel.length-1;
+        if(proposalLen>4){ node.classList.add('dim'); return; }
+
+        if(desired==null){ node.classList.add('pop'); return; }
+        const haveRank = (base==='2') ? twos : (counts[base]||0);
+        const canReach = (haveRank + twos) >= desired;
+        if(canReach) node.classList.add('pop'); else node.classList.add('dim');
+      });
+    }
+
+    function enableActions(){
+      const s = window.__state; if(!s) return;
+      const myTurn = s.turnPlayerId===youId;
+      const desired = s.trick?.count ?? null;
+      const top     = s.trick?.topRankVal ?? null;
+      const sel = selectedCodes();
+      let canPlay=false;
+      if(myTurn){
+        if(desired==null){
+          canPlay = sel.length>0;
+        } else {
+          if(sel.length>=desired && sel.length<=4){
+            let base = baseRank;
+            if(!base){
+              for(const sc of sel){ const r=rankFrom(sc); if(r!=='2'){ base=r; break; } }
+              if(!base && sel.some(c=>rankFrom(c)==='2')) base='2';
+            }
+            const eff = (base==='2') ? RVAL['2'] : RVAL[base];
+            canPlay = (top==null) || (eff>=top);
+          }
+        }
+      }
+      playBtn.disabled = !canPlay;
+      passBtn.disabled = !myTurn;
+      newRoundBtn.disabled = !(s.started && s.players.every(p=>p.finished));
+    }
+
+    createBtn.onclick=()=>socket.emit('createRoom',{name:nameI.value, code: codeI.value});
+    joinBtn.onclick=()=>socket.emit('joinRoom',{name:nameI.value, code: codeI.value});
+    startBtn.onclick=()=>socket.emit('startGame',{code: roomCode});
+    deckBtn.onclick=()=>{ const s=window.__state; if(!s) return; const next=(s.deckCount===1?2:1); socket.emit('toggleDeckCount',{code: roomCode, deckCount: next}); };
+    function selectedCards(){ return selectedCodes(); }
+    playBtn.onclick=()=>socket.emit('play',{code: roomCode, cards: selectedCards()});
+    passBtn.onclick=()=>socket.emit('pass',{code: roomCode});
+    newRoundBtn.onclick=()=>socket.emit('newRound',{code: roomCode});
+
+    okBtn.onclick=()=>{ overlay.style.display='none'; };
+    nextBtn.onclick=()=>{ overlay.style.display='none'; socket.emit('newRound',{code: roomCode}); };
+
+    socket.on('connect', ()=>{ youId = socket.id; });
+    socket.on('errorMsg', m=>{ addLog('⚠ ' + m); alert(m); });
+    socket.on('roomCreated', c=>{ roomCode=c; codeI.value=c; addLog('Room gemaakt: '+c); });
+
+    socket.on('state', s=>{
+      window.__state=s; roomCode=s.code;
+      roomInfo.textContent = `Room ${s.code} · Ronde ${s.round} · Decks: ${s.deckCount||1}`;
+      deckCountLabel.textContent = s.deckCount||1;
+      const ids = (s.players||[]).map(p=>p.id);
+      if(!ids.includes(s.hostId) && ids.includes(youId)) socket.emit('claimHost',{code: roomCode});
+      startBtn.disabled = !(youId && s.hostId===youId && !s.started);
+      renderPlayers(s); renderScoreboard(s); renderTrick(s.trick);
+      enableActions(); applyHintingToHand();
+    });
+
+    socket.on('hands', list=>{ lastHands=new Map(list.map(x=>[x.id,x.hand])); renderHand(); enableActions(); applyHintingToHand(); });
+    socket.on('handsUpdate', ({playerId, hand})=>{ lastHands.set(playerId,hand); if(playerId===youId){ renderHand(); applyHintingToHand(); enableActions(); } });
+    socket.on('playerFinished', ({playerId, order})=>{ const p=(window.__state?.players||[]).find(x=>x.id===playerId); addLog(`${p?.name||'Speler'} is klaar (#${order}).`); });
+
+    socket.on('trickReset', ({leaderId})=>{
+      addLog('Nieuwe slag. Leider speelt uit.');
+      baseRank=null;
+      [...handDiv.querySelectorAll('.cardx.sel')].forEach(n=>n.classList.remove('sel'));
+      applyHintingToHand(); enableActions();
+    });
+
+    socket.on('roundEnd', ({players, winnerId})=>{
+      const s=window.__state;
+      if(s){ for(const pl of players){ const p=s.players.find(x=>x.id===pl.id); if(p){ p.role=pl.role; p.score=pl.score; } } renderPlayers(s); renderScoreboard(s); }
+      const win = (players||[]).find(p=>p.id===winnerId);
+      winBanner.textContent = win ? `🏆 Winnaar: ${win.name} 🏆` : 'Ronde afgelopen';
+      roundScores.innerHTML='';
+      (players||[]).slice().sort((a,b)=> (b.score||0)-(a.score||0)).forEach((p,idx)=>{
+        const row=document.createElement('div'); row.className=['pill', roleClass(p.role)].join(' ');
+        row.innerHTML=`<span class="avatar">${idx+1}</span><div>${p.name}</div><div class="count">${p.score||0} pt</div>`;
+        roundScores.appendChild(row);
+      });
+      overlay.style.display='flex';
+      enableActions();
+    });
+
+    // Visual swap info (alleen betrokken speler)
+    function showSwap(cardsGiven, cardsReceived){
+      swapGiven.innerHTML=''; swapReceived.innerHTML='';
+      cardsGiven.forEach(c=> swapGiven.appendChild(renderCard(c)));
+      cardsReceived.forEach(c=> swapReceived.appendChild(renderCard(c)));
+      swapWrap.style.display='flex';
+    }
+    swapOk.onclick=()=>{ swapWrap.style.display='none'; };
+
+    socket.on('swapInfo', ({given, received})=>{
+      // Render visueel met kaarttegels
+      showSwap(given||[], received||[]);
+    });
+
+    socket.on('spinStart', ({candidates, winnerId})=>{
+      if(!candidates || candidates.length<2) return;
+      sliceA.textContent = candidates[0].name;
+      sliceB.textContent = candidates[1].name || '—';
+      const winnerIdx = candidates.findIndex(c=>c.id===winnerId);
+      spinWrap.style.display='flex';
+      const spins = 6;
+      const base = winnerIdx===0 ? 0 : 180;
+      const angle = spins*360 + base + 10;
+      wheel.style.transition='transform 2.8s cubic-bezier(.2,.8,.2,1)';
+      requestAnimationFrame(()=>{ wheel.style.transform=`rotate(${angle}deg)`; });
+      setTimeout(()=>{
+        spinWrap.style.display='none';
+        wheel.style.transition='none';
+        wheel.style.transform='rotate(0deg)';
+      }, 3000);
+    });
+  </script>
+</body>
+</html>
