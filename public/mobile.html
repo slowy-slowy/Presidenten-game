@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Presidenten (mobiel)</title>
+<link rel="stylesheet" href="/mobile.css" />
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<header>
+  <h1>🂡 Presidenten</h1>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span id="roomInfo" class="badge">—</span>
+    <button id="roomBtn" class="btn">Room</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Jouw hand</h3>
+      <span id="youCount" class="badge">0 kaarten</span>
+    </div>
+    <div id="hand" class="hand"></div>
+  </section>
+
+  <section class="panel">
+    <h3 style="margin-top:0">Huidige slag</h3>
+    <div id="trick" class="trick"></div>
+  </section>
+</main>
+
+<div class="footer">
+  <button id="playBtn" class="btn">Leg</button>
+  <button id="passBtn" class="btn">Pas</button>
+  <button id="newRoundBtn" class="btn">Nieuwe ronde</button>
+</div>
+
+<!-- Drawer: Room & Players -->
+<div id="drawer" class="drawer">
+  <div class="shade"></div>
+  <div class="sheet">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Room</h3>
+      <button id="closeDrawer" class="btn">Sluit</button>
+    </div>
+    <div style="display:grid;gap:8px;margin-top:8px">
+      <input id="name" placeholder="Jouw naam" class="btn" />
+      <input id="code" placeholder="Room code (bv. ABC12)" class="btn" />
+      <div style="display:flex;gap:8px">
+        <button id="createBtn" class="btn" style="flex:1">Maken</button>
+        <button id="joinBtn" class="btn" style="flex:1">Joinen</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="startBtn" class="btn" style="flex:1">Start</button>
+        <button id="deckBtn" class="btn" style="flex:1">Decks: <span id="deckCount">1</span></button>
+      </div>
+      <div>
+        <h4>Spelers</h4>
+        <div id="players" style="display:grid;gap:6px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay scoreboard -->
+<div id="overlay" class="overlay">
+  <div class="panel">
+    <div id="winBanner" style="text-align:center;font-weight:800">Ronde afgelopen</div>
+    <div id="roundScores" style="display:grid;gap:6px;margin-top:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button id="okBtn" class="btn">Ok</button>
+      <button id="nextBtn" class="btn">Nieuwe ronde</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const socket = io();
+let youId=null, roomCode=null, lastHands=new Map();
+let baseRank=null;
+
+const $ = id=>document.getElementById(id);
+const nameI=$('name'), codeI=$('code'), roomInfo=$('roomInfo'), deckBtn=$('deckBtn'), deckCountLabel=$('deckCount');
+const createBtn=$('createBtn'), joinBtn=$('joinBtn'), startBtn=$('startBtn');
+const playersDiv=$('players');
+const handDiv=$('hand'), youCount=$('youCount'), playBtn=$('playBtn'), passBtn=$('passBtn'), newRoundBtn=$('newRoundBtn');
+const trickDiv=$('trick');
+const overlay=$('overlay'), winBanner=$('winBanner'), roundScores=$('roundScores'), okBtn=$('okBtn'), nextBtn=$('nextBtn');
+const drawer=$('drawer'), roomBtn=$('roomBtn'), closeDrawer=$('closeDrawer');
+const toast=$('toast');
+
+function showToast(t){ toast.textContent=t; toast.style.display='block'; setTimeout(()=>toast.style.display='none',2000); }
+
+roomBtn.onclick=()=>drawer.classList.add('active');
+closeDrawer.onclick=()=>drawer.classList.remove('active');
+
+function suitChar(s){ return ({C:'♣',D:'♦',H:'♥',S:'♠'})[s]; }
+function isRed(s){ return s==='D'||s==='H'; }
+function rankFrom(code){ return code.slice(0,-1); }
+function isTwo(code){ return rankFrom(code)==='2'; }
+const RANKS=['3','4','5','6','7','8','9','10','J','Q','K','A','2'];
+const RVAL=Object.fromEntries(RANKS.map((r,i)=>[r,i]));
+const suitMap={'♣':'C','♦':'D','♥':'H','♠':'S'};
+
+function renderCard(code, mini=false){
+  const rank = code.slice(0,-1);
+  const suit = code.at(-1);
+  const div=document.createElement('div');
+  div.className='cardx'+(mini?' mini':'');
+  const r=document.createElement('div'); r.className='rank '+(isRed(suit)?'red':'black'); r.textContent=rank;
+  const mid=document.createElement('div'); mid.style.display='grid'; mid.style.placeItems='center';
+  const s=document.createElement('div'); s.className='suit '+(isRed(suit)?'red':'black'); s.textContent=suitChar(suit);
+  const b=document.createElement('div'); b.className='suit '+(isRed(suit)?'red':'black'); b.style.justifySelf='end'; b.textContent=suitChar(suit);
+  mid.appendChild(s);
+  div.appendChild(r); div.appendChild(mid); div.appendChild(b);
+  return div;
+}
+
+function codeFromNode(node){
+  const rankTxt = node.querySelector('.rank')?.textContent;
+  const suitCharTxt = node.lastChild?.textContent;
+  return rankTxt && suitMap[suitCharTxt] ? (rankTxt + suitMap[suitCharTxt]) : null;
+}
+
+function selectedCodes(){
+  const sel = [...handDiv.querySelectorAll('.cardx.sel')];
+  return sel.map(codeFromNode);
+}
+
+function renderPlayers(state){
+  playersDiv.innerHTML='';
+  state.players.forEach(p=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:8px;background:#111827;border:1px solid #334155;border-radius:12px;padding:8px';
+    row.innerHTML = `<div style="width:28px;height:28px;border-radius:50%;background:#1f2937;display:grid;place-items:center;font-weight:700">${(p.name||'')[0]||'?'}</div>
+    <div style="flex:1">${p.name}</div><div style="opacity:.8">${p.finished?'klaar':(p.handCount||0)+' kaarten'}</div>`;
+    playersDiv.appendChild(row);
+  });
+}
+
+function renderHand(){
+  const cards = lastHands.get(youId)||[];
+  youCount.textContent = `${cards.length} kaarten`;
+  handDiv.innerHTML='';
+  cards.forEach(c=>{
+    const node = renderCard(c);
+    node.onclick=()=>{
+      const code = codeFromNode(node);
+      const sel = selectedCodes();
+      const willSelect = !node.classList.contains('sel');
+      const proposal = willSelect ? sel.concat([code]) : sel.filter(x=>x!==code);
+      if (willSelect && proposal.length>4) return;
+      if(sel.length===0){
+        node.classList.toggle('sel');
+        baseRank = rankFrom(code);
+      } else {
+        let base = baseRank;
+        if(!base){
+          for(const sc of sel){ const r=rankFrom(sc); if(r!=='2'){ base=r; break; } }
+          if(!base && sel.some(c=>rankFrom(c)==='2')) base='2';
+          baseRank=base;
+        }
+        const r = rankFrom(code);
+        if(r===base || r==='2'){
+          node.classList.toggle('sel');
+        } else {
+          [...handDiv.querySelectorAll('.cardx.sel')].forEach(n=>n.classList.remove('sel'));
+          node.classList.add('sel');
+          baseRank = r;
+        }
+      }
+      enableActions();
+      applyHintingToHand();
+    };
+    handDiv.appendChild(node);
+  });
+}
+
+function renderTrick(t){
+  trickDiv.innerHTML='';
+  const meta=document.createElement('div');
+  meta.className='badge'; meta.textContent=(t.count?`Min.: ${t.count}`:'Nieuwe slag') + (t.topRankVal!=null?` · ≥ ${RANKS[t.topRankVal]}`:'');
+  trickDiv.appendChild(meta);
+  if(t.pile && t.pile[0]){
+    const wrap=document.createElement('div'); wrap.style.display='flex'; wrap.style.gap='6px';
+    t.pile[0].cards.forEach(c=>wrap.appendChild(renderCard(c,true)));
+    trickDiv.appendChild(wrap);
+  }
+}
+
+function applyHintingToHand(){
+  const s = window.__state; if(!s) return;
+  const desired = s.trick?.count ?? null;
+  const top     = s.trick?.topRankVal ?? null;
+  const myHand  = (lastHands.get(youId) || []).slice();
+  const nodes   = [...handDiv.querySelectorAll('.cardx')];
+  const sel     = selectedCodes();
+
+  if(sel.length>=4){
+    nodes.forEach(n=>{ if(!n.classList.contains('sel')) n.classList.add('dim'); else { n.classList.remove('dim'); n.classList.add('pop'); }});
+    return;
+  }
+
+  function countByRank(hand){
+    const m={}; let t=0;
+    for(const c of hand){ const r=rankFrom(c); if(r==='2') t++; else m[r]=(m[r]||0)+1; }
+    return {m,t};
+  }
+  const {m:counts, t:twos} = countByRank(myHand);
+
+  function canStartWithRank(r){
+    if(desired==null) return true;
+    const have = (r==='2') ? twos : (counts[r]||0) + twos;
+    const maxPossible = Math.min(have, 4);
+    const rankOk = (top==null) || (r==='2' ? RVAL['2']>=top : RVAL[r]>=top);
+    return (maxPossible >= desired) && rankOk;
+  }
+
+  let base = baseRank;
+  if(sel.length){
+    if(!base){
+      for(const sc of sel){ const r=rankFrom(sc); if(r!=='2'){ base=r; break; } }
+      if(!base && sel.some(c=>rankFrom(c)==='2')) base='2';
+      baseRank=base;
+    }
+  } else {
+    base = null;
+  }
+
+  nodes.forEach(node=>{
+    node.classList.remove('dim','pop');
+    const code = codeFromNode(node); if(!code) return;
+    const r = rankFrom(code);
+    const eff = (r==='2') ? RVAL['2'] : RVAL[r];
+
+    if(desired!=null && top!=null && eff<top){ node.classList.add('dim'); return; }
+
+    if(sel.length===0){
+      if(canStartWithRank(r)) node.classList.add('pop'); else node.classList.add('dim');
+      return;
+    }
+
+    if(!(r===base || r==='2')){ node.classList.add('dim'); return; }
+
+    const willSelect = !node.classList.contains('sel');
+    const proposalLen = willSelect ? sel.length+1 : sel.length-1;
+    if(proposalLen>4){ node.classList.add('dim'); return; }
+
+    if(desired==null){ node.classList.add('pop'); return; }
+    const haveRank = (base==='2') ? twos : (counts[base]||0);
+    const canReach = (haveRank + twos) >= desired;
+    if(canReach) node.classList.add('pop'); else node.classList.add('dim');
+  });
+}
+
+function enableActions(){
+  const s = window.__state; if(!s) return;
+  const myTurn = s.turnPlayerId===youId;
+  const desired = s.trick?.count ?? null;
+  const top     = s.trick?.topRankVal ?? null;
+  const sel = selectedCodes();
+  let canPlay=false;
+  if(myTurn){
+    if(desired==null){
+      canPlay = sel.length>0;
+    } else {
+      if(sel.length>=desired && sel.length<=4){
+        let base = baseRank;
+        if(!base){
+          for(const sc of sel){ const r=rankFrom(sc); if(r!=='2'){ base=r; break; } }
+          if(!base && sel.some(c=>rankFrom(c)==='2')) base='2';
+        }
+        const eff = (base==='2') ? RVAL['2'] : RVAL[base];
+        canPlay = (top==null) || (eff>=top);
+      }
+    }
+  }
+  playBtn.disabled = !canPlay;
+  passBtn.disabled = !myTurn;
+  newRoundBtn.disabled = !(s.started && s.players.every(p=>p.finished));
+}
+
+// Actions
+createBtn.onclick=()=>socket.emit('createRoom',{name:nameI.value, code: codeI.value});
+joinBtn.onclick=()=>socket.emit('joinRoom',{name:nameI.value, code: codeI.value});
+startBtn.onclick=()=>socket.emit('startGame',{code: roomCode});
+deckBtn.onclick=()=>{ const s=window.__state; if(!s) return; const next=(s.deckCount===1?2:1); socket.emit('toggleDeckCount',{code: roomCode, deckCount: next}); };
+function selectedCards(){ return selectedCodes(); }
+playBtn.onclick=()=>socket.emit('play',{code: roomCode, cards: selectedCards()});
+passBtn.onclick=()=>socket.emit('pass',{code: roomCode});
+newRoundBtn.onclick=()=>socket.emit('newRound',{code: roomCode});
+
+okBtn.onclick=()=>{ overlay.style.display='none'; };
+nextBtn.onclick=()=>{ overlay.style.display='none'; socket.emit('newRound',{code: roomCode}); };
+
+// Sockets
+socket.on('connect', ()=>{ youId = socket.id; });
+socket.on('errorMsg', m=>{ showToast(m); });
+
+socket.on('roomCreated', c=>{ roomCode=c; codeI.value=c; showToast('Room: '+c); });
+
+socket.on('state', s=>{
+  window.__state=s; roomCode=s.code;
+  roomInfo.textContent = `Room ${s.code||'—'} · Ronde ${s.round||1} · Decks: ${s.deckCount||1}`;
+  startBtn.disabled = !(youId && s.hostId===youId && !s.started);
+  renderPlayers(s); renderTrick(s.trick);
+  enableActions(); applyHintingToHand();
+});
+
+socket.on('hands', list=>{ lastHands=new Map(list.map(x=>[x.id,x.hand])); renderHand(); enableActions(); applyHintingToHand(); });
+socket.on('handsUpdate', ({playerId, hand})=>{ lastHands.set(playerId,hand); if(playerId===youId){ renderHand(); applyHintingToHand(); enableActions(); } });
+socket.on('playerFinished', ({playerId, order})=>{ /* no-op UI minimal */ });
+
+socket.on('trickReset', ({leaderId})=>{
+  baseRank=null;
+  [...handDiv.querySelectorAll('.cardx.sel')].forEach(n=>n.classList.remove('sel'));
+  applyHintingToHand(); enableActions();
+});
+
+socket.on('roundEnd', ({players, winnerId})=>{
+  roundScores.innerHTML='';
+  (players||[]).slice().sort((a,b)=> (b.score||0)-(a.score||0)).forEach((p,idx)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:8px;background:#111827;border:1px solid #334155;border-radius:12px;padding:8px';
+    row.innerHTML=`<div style="width:28px;height:28px;border-radius:50%;background:#1f2937;display:grid;place-items:center;font-weight:700">${idx+1}</div><div style="flex:1">${p.name}</div><div>${p.score||0} pt</div>`;
+    roundScores.appendChild(row);
+  });
+  const win = (players||[]).find(p=>p.id===winnerId);
+  winBanner.textContent = win? `🏆 Winnaar: ${win.name}` : 'Ronde afgelopen';
+  overlay.style.display='flex';
+  enableActions();
+});
+
+socket.on('swapInfo', ({given, received})=>{
+  // visual swap could be alerted or ignored on mobile; leave as is to match server
+  const msg = `Ruil uitgevoerd:\n- Afgegeven: ${given.join(', ')}\n- Gekregen: ${received.join(', ')}`;
+  alert(msg);
+});
+
+socket.on('spinStart', ({candidates, winnerId})=>{
+  showToast('Kiezen wie start…');
+});
+</script>
+</body>
+</html>

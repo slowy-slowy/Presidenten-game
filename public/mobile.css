@@ -1,0 +1,42 @@
+
+:root{
+  --bg:#0f172a; --card:#0b1225; --line:#1f2937; --ink:#e2e8f0;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+header{position:sticky;top:0;z-index:10;padding:10px 12px;background:#0b1225;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+h1{font-size:18px;margin:0;font-weight:800}
+.btn{padding:12px 14px;border-radius:12px;border:1px solid #334155;background:#111827;color:var(--ink);font-size:16px}
+.btn:disabled{opacity:.5}
+.badge{padding:6px 10px;border:1px solid #334155;border-radius:999px;background:#111827;font-size:13px}
+
+main{padding:12px;display:grid;gap:12px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+
+.hand{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+@media (min-width:420px){ .hand{grid-template-columns:repeat(8,1fr);} }
+@media (min-width:540px){ .hand{grid-template-columns:repeat(10,1fr);} }
+.cardx{height:96px;border-radius:12px;border:1px solid #334155;background:#0b1022;display:grid;grid-template-rows:auto 1fr auto;padding:6px;user-select:none}
+.cardx.sel{outline:3px solid #22d3ee}
+.cardx.pop{box-shadow:0 0 0 3px #22c55e55, 0 6px 18px rgba(0,0,0,.35)}
+.cardx.dim{opacity:.35;filter:grayscale(25%)}
+.rank{font-weight:800}
+.suit{justify-self:end}
+.red{color:#ef4444} .black{color:#e2e8f0}
+
+.trick{display:flex;gap:6px;flex-wrap:wrap}
+.mini{transform:scale(.9);opacity:.95}
+
+.footer{position:sticky;bottom:0;background:#0b1225;border-top:1px solid var(--line);padding:8px 12px;display:grid;grid-template-columns:1fr auto auto;gap:8px}
+.footer .btn{min-height:52px;font-size:17px}
+
+.drawer{position:fixed;inset:0;display:none}
+.drawer.active{display:block}
+.drawer .shade{position:absolute;inset:0;background:#0007}
+.drawer .sheet{position:absolute;inset:auto 0 0 0;background:var(--card);border-top-left-radius:16px;border-top-right-radius:16px;border:1px solid var(--line);padding:12px;max-height:75vh;overflow:auto}
+
+.overlay{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;padding:16px}
+.overlay .panel{max-width:520px;width:100%}
+
+.toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:#111827;border:1px solid #334155;border-radius:12px;padding:10px 12px;display:none}
